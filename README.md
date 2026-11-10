@@ -1,15 +1,34 @@
 # Draughts AI
 
-An offline-first Android application for analyzing and practicing Russian Draughts (Russian checkers).
+Offline-first Android analysis and training app for **classic Russian Draughts**.
 
-## Current milestone
-The initial Android project foundation and manual board editor are being added. The first iteration includes a Kotlin + Jetpack Compose app, an 8x8 board, a basic board model, and starter unit tests.
+## Current implementation
+- Kotlin + Jetpack Compose Android app.
+- 8x8 board and editable positions.
+- Immutable board model.
+- Classic Russian Draughts legal-move engine:
+  - Men move forward only on quiet moves.
+  - Men capture forwards and backwards.
+  - Captures are compulsory.
+  - Multi-captures continue until no further capture is available.
+  - Flying kings can land on any available square beyond a captured piece.
+  - Promotion during a capture continues with king movement.
+  - Captured pieces remain on the board until the full capture sequence ends (Turkish strike).
+  - Classic Russian capture choice is not forced by the maximum number of captured pieces.
+- Unit tests for the core board and movement rules.
+- English Gemini master prompt and rule reference.
 
-## Planned milestones
-1. Stabilize the board editor and position model.
-2. Implement and test the complete Russian Draughts rules engine.
-3. Add an offline minimax/alpha-beta analysis engine.
+## Important
+This follows the **classic Russian Draughts** rule set described by the Russian Draughts Federation. It is not International Draughts. The separate tournament variant named Shashki-64 may apply a majority-capture rule; this code follows classic Russian rules instead.
+
+The Android build and full JUnit suite have not yet been run in Android Studio/CI. Do not assume that the project is build-verified.
+
+## Open
+Open this repository in Android Studio, sync Gradle, then run the app and unit tests.
+
+## Next milestones
+1. Run and fix Android build and all unit tests.
+2. Add AI search (minimax + alpha-beta pruning).
+3. Add position save/load and notation.
 4. Add explicit screenshot import with user correction.
-5. Add an optional, user-invoked floating analysis panel for positions the user has entered or deliberately imported.
-
-This project is an analysis and training tool. It does not silently capture other apps, automate moves, or manipulate third-party competitive games.
+5. Add optional, user-invoked analysis panel for positions the user has entered or deliberately imported.
