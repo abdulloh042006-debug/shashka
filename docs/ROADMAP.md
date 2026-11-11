@@ -12,6 +12,8 @@
 - [x] Keep captured pieces on the board until the capture sequence finishes (Turkish strike).
 - [x] Add Negamax and alpha-beta search.
 - [x] Add iterative deepening, move ordering, and a transposition table.
+- [x] Add PVS and verified late-move reductions.
+- [x] Extend single-legal-move lines and improve positional evaluation.
 - [x] Add quiescence search for compulsory captures at the horizon.
 - [x] Connect the AI analysis action to the Android UI off the main thread.
 - [x] Add unit tests for AI search behavior.
