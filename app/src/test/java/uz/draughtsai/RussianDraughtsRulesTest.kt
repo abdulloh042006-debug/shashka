@@ -112,7 +112,7 @@ class RussianDraughtsRulesTest {
 
         val moves = RussianDraughtsRules.legalMoves(board)
 
-        // Landing on c4 allows another capture of b6; landing on d5 ends
+        // Landing on d4 allows another capture of b6; landing on e5 ends
         // the turn. Both complete routes are legal choices in Russian Draughts.
         assertTrue(moves.any {
             it.from == Square(7, 0) &&
