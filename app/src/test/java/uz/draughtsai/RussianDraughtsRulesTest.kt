@@ -102,6 +102,31 @@ class RussianDraughtsRulesTest {
     }
 
     @Test
+    fun kingKeepsTerminalCaptureBranchWhenAnotherLandingCanContinue() {
+        val board = position(
+            Side.WHITE,
+            Square(7, 0) to Piece.WHITE_KING,
+            Square(5, 2) to Piece.BLACK_MAN,
+            Square(2, 1) to Piece.BLACK_MAN
+        )
+
+        val moves = RussianDraughtsRules.legalMoves(board)
+
+        // Landing on c4 allows another capture of b6; landing on d5 ends
+        // the turn. Both complete routes are legal choices in Russian Draughts.
+        assertTrue(moves.any {
+            it.from == Square(7, 0) &&
+                it.landings == listOf(Square(4, 3), Square(1, 0)) &&
+                it.captured == listOf(Square(5, 2), Square(2, 1))
+        })
+        assertTrue(moves.any {
+            it.from == Square(7, 0) &&
+                it.landings == listOf(Square(3, 4)) &&
+                it.captured == listOf(Square(5, 2))
+        })
+    }
+
+    @Test
     fun classicRussianRulesDoNotRequireTheLongestCaptureSequence() {
         val board = position(
             Side.WHITE,
