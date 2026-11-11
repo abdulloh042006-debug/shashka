@@ -1,4 +1,4 @@
-# Draughts AI Roadmap
+# Shashka AI Roadmap
 
 - [x] Initialize Android application structure.
 - [x] Add Kotlin + Jetpack Compose UI foundation.
@@ -10,8 +10,13 @@
 - [x] Implement compulsory continuation of multiple captures.
 - [x] Implement promotion during capture and continuation as a king.
 - [x] Keep captured pieces on the board until the capture sequence finishes (Turkish strike).
-- [ ] Run the Android Gradle build and JUnit suite in Android Studio/CI.
-- [ ] M3: implement local AI search after the rules engine passes the full test suite.
-- [ ] M4: position save/load and notation.
-- [ ] M5: user-selected screenshot import and correction.
-- [ ] M6: optional transparent floating analysis panel for authorized positions.
+- [x] Add Negamax and alpha-beta search.
+- [x] Add iterative deepening, move ordering, and a transposition table.
+- [x] Add quiescence search for compulsory captures at the horizon.
+- [x] Connect the AI analysis action to the Android UI off the main thread.
+- [x] Add unit tests for AI search behavior.
+- [ ] Run the complete Android Gradle build and JUnit suite in CI.
+- [ ] Add position save/load and notation.
+- [ ] Build a benchmark suite from solved positions and record strength by time/depth.
+- [ ] Add user-selected screenshot import and correction.
+- [ ] Consider optional opening-book and endgame-tablebase support after benchmarking.
