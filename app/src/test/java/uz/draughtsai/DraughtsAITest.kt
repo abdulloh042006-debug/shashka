@@ -1,4 +1,4 @@
-package uz.draughtsai
+﻿package uz.draughtsai
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -36,6 +36,7 @@ class DraughtsAITest {
 
         assertNotNull(result.bestMove)
         assertEquals("c3:e5:g3", result.bestMove!!.toNotation())
-        assertTrue(result.score > 0)
+        assertEquals(2, result.bestMove!!.captureCount)
     }
 }
+

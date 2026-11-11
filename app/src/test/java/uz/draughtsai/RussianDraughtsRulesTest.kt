@@ -1,4 +1,4 @@
-package uz.draughtsai
+﻿package uz.draughtsai
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,12 +63,12 @@ class RussianDraughtsRulesTest {
     @Test
     fun midCapturePromotion_crownsImmediatelyAndContinuesAsFlyingKing() {
         // White man at d6 jumps e7 -> lands on promotion square f8 (crowns to King immediately),
-        // then continues in the SAME turn as a flying king capturing c5 and landing on b4 or a3!
+        // then continues in the SAME turn as a flying king capturing g7 and landing on h6!
         val board = Board.fromMap(
             pieces = mapOf(
                 Pos.fromNotation("d6") to Piece(Side.WHITE, PieceKind.MAN),
                 Pos.fromNotation("e7") to Piece(Side.BLACK, PieceKind.MAN),
-                Pos.fromNotation("c5") to Piece(Side.BLACK, PieceKind.MAN)
+                Pos.fromNotation("g7") to Piece(Side.BLACK, PieceKind.MAN)
             ),
             sideToMove = Side.WHITE
         )
@@ -76,15 +76,15 @@ class RussianDraughtsRulesTest {
         val moves = RussianDraughtsRules.legalMoves(board)
         val notations = moves.map { it.toNotation() }.toSet()
 
-        assertEquals(setOf("d6:f8:b4", "d6:f8:a3"), notations)
+        assertEquals(setOf("d6:f8:h6"), notations)
         assertTrue(moves.all { it.promoted })
 
         // Applying d6:f8:a3 should leave a White King on a3 and remove both Black pieces
-        val chosen = moves.first { it.toNotation() == "d6:f8:a3" }
+        val chosen = moves.first { it.toNotation() == "d6:f8:h6" }
         val nextBoard = RussianDraughtsRules.applyMove(board, chosen)
-        assertEquals(Piece(Side.WHITE, PieceKind.KING), nextBoard[Pos.fromNotation("a3")])
+        assertEquals(Piece(Side.WHITE, PieceKind.KING), nextBoard[Pos.fromNotation("h6")])
         assertNull(nextBoard[Pos.fromNotation("e7")])
-        assertNull(nextBoard[Pos.fromNotation("c5")])
+        assertNull(nextBoard[Pos.fromNotation("g7")])
         assertEquals(Side.BLACK, nextBoard.sideToMove)
     }
 
@@ -155,3 +155,4 @@ class RussianDraughtsRulesTest {
         assertEquals(setOf("c3:a5", "c3:e5:g3"), notations)
     }
 }
+
