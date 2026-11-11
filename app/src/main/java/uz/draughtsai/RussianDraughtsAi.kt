@@ -79,25 +79,29 @@ class RussianDraughtsAi {
         for ((moveIndex, move) in moves.withIndex()) {
             checkStop()
             val child = RussianDraughtsRules.applyMove(board, move)
-            val childDepth = depth - 1
-            val score = if (moveIndex == 0) {
-                -negamax(child, childDepth, -beta, -alpha, 1).score
-            } else {
-                var candidate = -negamax(child, childDepth, -alpha - 1, -alpha, 1).score
+            var childValue = negamax(child, depth - 1, -beta, -alpha, 1)
+            if (moveIndex > 0) {
+                var candidate = -negamax(
+                    child,
+                    depth - 1,
+                    -alpha - 1,
+                    -alpha,
+                    1
+                ).score
                 if (candidate > alpha && candidate < beta) {
-                    candidate = -negamax(child, childDepth, -beta, -alpha, 1).score
+                    childValue = negamax(child, depth - 1, -beta, -alpha, 1)
+                    candidate = -childValue.score
                 }
-                candidate
+                if (candidate <= alpha || candidate >= beta) {
+                    childValue = NodeValue(-candidate, emptyList())
+                }
             }
+
+            val score = -childValue.score
             if (score > bestScore) {
                 bestScore = score
                 bestMove = move
-                val continuation = if (moveIndex == 0 || score > alpha) {
-                    // Re-search the selected move with a full window to retain its PV.
-                    val exact = -negamax(child, childDepth, -beta, -alpha, 1)
-                    if (score < beta) exact.principalVariation else emptyList()
-                } else emptyList()
-                bestPv = listOf(move) + continuation
+                bestPv = listOf(move) + childValue.principalVariation
             }
             alpha = max(alpha, score)
         }
@@ -165,8 +169,9 @@ class RussianDraughtsAi {
             val childDepth = depth - 1 + extension
             val reduce = moveIndex >= 3 && depth >= 3 && !move.isCapture && !promotes
 
-            var score = if (moveIndex == 0) {
-                -negamax(child, childDepth, -beta, -alpha, ply + 1).score
+            val childValue: NodeValue
+            if (moveIndex == 0) {
+                childValue = negamax(child, childDepth, -beta, -alpha, ply + 1)
             } else {
                 val reducedDepth = if (reduce) max(0, childDepth - 1) else childDepth
                 var candidate = -negamax(
@@ -177,8 +182,7 @@ class RussianDraughtsAi {
                     ply + 1
                 ).score
 
-                // Late-move reduction is speculative. Any move that improves
-                // alpha is re-searched at full depth before it can replace the PV.
+                // A reduced move that improves alpha is verified at full depth.
                 if (reduce && candidate > alpha) {
                     candidate = -negamax(
                         child,
@@ -188,32 +192,20 @@ class RussianDraughtsAi {
                         ply + 1
                     ).score
                 }
-                if (candidate > alpha && candidate < beta) {
-                    candidate = -negamax(
-                        child,
-                        childDepth,
-                        -beta,
-                        -alpha,
-                        ply + 1
-                    ).score
+
+                childValue = if (candidate > alpha && candidate < beta) {
+                    // Principal-variation search: only promising moves get a full window.
+                    negamax(child, childDepth, -beta, -alpha, ply + 1)
+                } else {
+                    NodeValue(-candidate, emptyList())
                 }
-                candidate
             }
 
+            val score = -childValue.score
             if (score > bestScore) {
                 bestScore = score
                 bestMove = move
-                bestPv = listOf(move)
-                if (score < beta) {
-                    val exact = if (moveIndex == 0) {
-                        negamax(child, childDepth, -beta, -alpha, ply + 1)
-                    } else {
-                        negamax(child, childDepth, -beta, -alpha, ply + 1)
-                    }
-                    bestPv = listOf(move) + exact.principalVariation
-                    score = -exact.score
-                    bestScore = score
-                }
+                bestPv = listOf(move) + childValue.principalVariation
             }
 
             alpha = max(alpha, score)
