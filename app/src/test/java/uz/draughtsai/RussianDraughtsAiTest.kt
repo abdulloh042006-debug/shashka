@@ -49,8 +49,7 @@ class RussianDraughtsAiTest {
     fun searchReportsNoMoveWhenSideToMoveHasNoLegalMove() {
         val board = position(
             Side.WHITE,
-            Square(0, 1) to Piece.WHITE_MAN,
-            Square(1, 2) to Piece.BLACK_MAN
+            Square(0, 1) to Piece.WHITE_MAN
         )
         val result = RussianDraughtsAi().search(
             board,
