@@ -16,7 +16,10 @@ Offline-first Android analysis and training app for **classic Russian Draughts**
   - Captured pieces remain on the board until the full capture sequence ends (Turkish strike).
   - Classic Russian capture choice is not forced by the maximum number of captured pieces.
 - Offline AI search:
-  - Negamax with alpha-beta pruning.
+  - Negamax (the minimax equivalent) with alpha-beta pruning.
+  - Principal Variation Search (PVS) for later ordered moves.
+  - Late Move Reductions (LMR), verified at full depth when a reduced move improves alpha.
+  - Single-legal-move extensions.
   - Iterative deepening with depth, time, and node limits.
   - Transposition table with position hashing and bound types.
   - Move ordering using transposition moves, captures, promotion, killer moves, and history scores.
