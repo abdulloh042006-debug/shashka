@@ -7,7 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +18,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,8 +36,12 @@ private fun DraughtsAiScreen() {
     var selectedSide by remember { mutableStateOf(Side.WHITE) }
     var editMode by remember { mutableStateOf(true) }
     var selectedSquare by remember { mutableStateOf<Square?>(null) }
+    var isAnalyzing by remember { mutableStateOf(false) }
+    var analysis by remember { mutableStateOf<SearchResult?>(null) }
+    val scope = rememberCoroutineScope()
+
     var status by remember {
-        mutableStateOf("Tap a dark square to place or cycle a piece.")
+        mutableStateOf("Donalarni joylashtiring yoki holatni tahrirlang, so‘ng AI tahlilini ishga tushiring.")
     }
 
     val background = Color(0xFF10151D)
@@ -40,17 +50,20 @@ private fun DraughtsAiScreen() {
     MaterialTheme(colorScheme = darkColorScheme(primary = gold)) {
         Surface(Modifier.fillMaxSize(), color = background) {
             Column(
-                Modifier.fillMaxSize().padding(16.dp),
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "DRAUGHTS AI",
+                    "SHASHKA AI",
                     color = Color(0xFFF1D18A),
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Black
                 )
                 Text(
-                    "Russian Draughts · Position Lab",
+                    "Classic Russian Draughts · Offline Analysis",
                     color = Color(0xFFABB6C5),
                     fontSize = 13.sp
                 )
@@ -71,7 +84,7 @@ private fun DraughtsAiScreen() {
                             editMode = false
                             selectedSquare = null
                         },
-                        label = { Text("Move piece") }
+                        label = { Text("Reposition") }
                     )
                 }
 
@@ -109,7 +122,7 @@ private fun DraughtsAiScreen() {
                                                 Modifier.border(3.dp, gold)
                                             } else Modifier
                                         )
-                                        .clickable {
+                                        .clickable(enabled = !isAnalyzing) {
                                             if (!playable) {
                                                 status = "Only dark squares can contain pieces."
                                             } else if (editMode) {
@@ -121,15 +134,14 @@ private fun DraughtsAiScreen() {
                                                     Piece.BLACK_KING -> Piece.EMPTY
                                                 }
                                                 board = board.withPiece(square, nextPiece)
-                                                status =
-                                                    "Square ${'a' + col}${8 - row}: ${nextPiece.name}"
+                                                analysis = null
+                                                status = "Square ${'a' + col}${8 - row}: ${nextPiece.name}"
                                             } else {
                                                 val source = selectedSquare
                                                 if (source == null) {
                                                     if (piece != Piece.EMPTY) {
                                                         selectedSquare = square
-                                                        status =
-                                                            "Selected ${'a' + col}${8 - row}."
+                                                        status = "Selected ${'a' + col}${8 - row}."
                                                     } else {
                                                         status = "Select a piece first."
                                                     }
@@ -139,8 +151,8 @@ private fun DraughtsAiScreen() {
                                                 } else if (piece == Piece.EMPTY) {
                                                     board = board.movePieceForEditing(source, square)
                                                     selectedSquare = null
-                                                    status =
-                                                        "Repositioned in editor. Game rules are not checked."
+                                                    analysis = null
+                                                    status = "Repositioned in editor. Legal game rules are not checked."
                                                 } else {
                                                     selectedSquare = square
                                                     status = "Selection changed."
@@ -188,11 +200,13 @@ private fun DraughtsAiScreen() {
                 ) {
                     OutlinedButton(
                         onClick = { selectedSide = Side.WHITE },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        enabled = !isAnalyzing
                     ) { Text("Place white") }
                     OutlinedButton(
                         onClick = { selectedSide = Side.BLACK },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        enabled = !isAnalyzing
                     ) { Text("Place black") }
                 }
 
@@ -201,12 +215,20 @@ private fun DraughtsAiScreen() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
-                        onClick = { board = board.withTurn(Side.WHITE) },
-                        modifier = Modifier.weight(1f)
+                        onClick = {
+                            board = board.withTurn(Side.WHITE)
+                            analysis = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isAnalyzing
                     ) { Text("White turn") }
                     OutlinedButton(
-                        onClick = { board = board.withTurn(Side.BLACK) },
-                        modifier = Modifier.weight(1f)
+                        onClick = {
+                            board = board.withTurn(Side.BLACK)
+                            analysis = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isAnalyzing
                     ) { Text("Black turn") }
                 }
 
@@ -215,19 +237,126 @@ private fun DraughtsAiScreen() {
                         board = Board.initial()
                         selectedSquare = null
                         selectedSide = Side.WHITE
+                        analysis = null
                         status = "Starting position restored."
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isAnalyzing
                 ) { Text("Reset board") }
+
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val positionSnapshot = board
+                        isAnalyzing = true
+                        analysis = null
+                        status = "AI positionni tahlil qilmoqda..."
+                        scope.launch {
+                            try {
+                                val result = withContext(Dispatchers.Default) {
+                                    RussianDraughtsAi().search(
+                                        positionSnapshot,
+                                        SearchLimits(
+                                            maxDepth = 10,
+                                            timeLimitMillis = 1_500,
+                                            quiescenceDepth = 10,
+                                            maxNodes = 400_000
+                                        )
+                                    )
+                                }
+                                if (board == positionSnapshot) {
+                                    analysis = result
+                                    status = if (result.bestMove == null) {
+                                        "Bu holatda yurish yo‘q. Navbatdagi tomon yutqazgan."
+                                    } else {
+                                        "Tahlil yakunlandi."
+                                    }
+                                } else {
+                                    status = "Tahlil paytida pozitsiya o‘zgardi. Yangi holatni qayta tahlil qiling."
+                                }
+                            } catch (error: Exception) {
+                                status = "Tahlil xatosi: ${error.message ?: "noma’lum xato"}"
+                            } finally {
+                                isAnalyzing = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isAnalyzing
+                ) {
+                    Text(if (isAnalyzing) "Analyzing..." else "Analyze best move")
+                }
+
+                analysis?.let { result ->
+                    Spacer(Modifier.height(8.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF1B2634)
+                        )
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            Text(
+                                "AI tavsiyasi",
+                                color = Color(0xFFF1D18A),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                result.bestMove?.let(::formatMove) ?: "Legal move topilmadi",
+                                color = Color.White,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Baholash: ${formatScore(result.score)} · chuqurlik: ${result.completedDepth}",
+                                color = Color(0xFFCFD8E3),
+                                fontSize = 12.sp
+                            )
+                            Text(
+                                "Qidirilgan tugunlar: ${result.nodes} · vaqt: ${result.elapsedMillis} ms",
+                                color = Color(0xFFABB6C5),
+                                fontSize = 12.sp
+                            )
+                            if (result.principalVariation.isNotEmpty()) {
+                                Text(
+                                    "Asosiy variant: " + result.principalVariation.joinToString("  ") { formatMove(it) },
+                                    color = Color(0xFFCFD8E3),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(8.dp))
                 Text(status, color = Color(0xFFB6C2D1), fontSize = 12.sp)
                 Text(
-                    "Starter milestone: legal move rules and AI are not implemented yet.",
+                    "Offline tahlil: faqat siz kiritgan yoki tahrirlagan pozitsiya. Avtomatik yurish yoki boshqa ilovani kuzatish yo‘q.",
                     color = Color(0xFF8793A3),
                     fontSize = 11.sp
                 )
             }
+        }
+    }
+}
+
+private fun formatMove(move: DraughtsMove): String {
+    val start = formatSquare(move.from)
+    val separator = if (move.isCapture) " × " else " → "
+    return start + separator + move.landings.joinToString(separator) { formatSquare(it) }
+}
+
+private fun formatSquare(square: Square): String =
+    "${'a' + square.col}${8 - square.row}"
+
+private fun formatScore(score: Int): String {
+    return when {
+        score >= 90_000 -> "MATE +"
+        score <= -90_000 -> "MATE −"
+        else -> {
+            val value = score / 100.0
+            val sign = if (value > 0) "+" else ""
+            sign + String.format(java.util.Locale.US, "%.2f", value)
         }
     }
 }
