@@ -79,9 +79,10 @@ class RussianDraughtsAi {
         for ((moveIndex, move) in moves.withIndex()) {
             checkStop()
             val child = RussianDraughtsRules.applyMove(board, move)
-            var childValue = negamax(child, depth - 1, -beta, -alpha, 1)
-            if (moveIndex > 0) {
-                var candidate = -negamax(
+            val childValue = if (moveIndex == 0) {
+                negamax(child, depth - 1, -beta, -alpha, 1)
+            } else {
+                val candidate = -negamax(
                     child,
                     depth - 1,
                     -alpha - 1,
@@ -89,14 +90,11 @@ class RussianDraughtsAi {
                     1
                 ).score
                 if (candidate > alpha && candidate < beta) {
-                    childValue = negamax(child, depth - 1, -beta, -alpha, 1)
-                    candidate = -childValue.score
-                }
-                if (candidate <= alpha || candidate >= beta) {
-                    childValue = NodeValue(-candidate, emptyList())
+                    negamax(child, depth - 1, -beta, -alpha, 1)
+                } else {
+                    NodeValue(-candidate, emptyList())
                 }
             }
-
             val score = -childValue.score
             if (score > bestScore) {
                 bestScore = score
