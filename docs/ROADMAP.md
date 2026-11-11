@@ -10,8 +10,7 @@
 - [x] Implement compulsory continuation of multiple captures.
 - [x] Implement promotion during capture and continuation as a king.
 - [x] Keep captured pieces on the board until the capture sequence finishes (Turkish strike).
-- [ ] Run the Android Gradle build and JUnit suite in Android Studio/CI.
-- [ ] M3: implement local AI search after the rules engine passes the full test suite.
-- [ ] M4: position save/load and notation.
-- [ ] M5: user-selected screenshot import and correction.
-- [ ] M6: optional transparent floating analysis panel for authorized positions.
+- [x] M3: implement local AI search (Iterative Deepening Negamax + Alpha-Beta + Transposition Table).
+- [x] M4: position save/load (FEN) and algebraic notation.
+- [x] M5: user-selected screenshot import and confirmation preview.
+- [x] M6: optional transparent floating analysis HUD for authorized positions.
