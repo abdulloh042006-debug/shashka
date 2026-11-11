@@ -76,15 +76,28 @@ class RussianDraughtsAi {
         var bestMove: DraughtsMove? = null
         var bestPv: List<DraughtsMove> = emptyList()
 
-        for (move in moves) {
+        for ((moveIndex, move) in moves.withIndex()) {
             checkStop()
             val child = RussianDraughtsRules.applyMove(board, move)
-            val childValue = negamax(child, depth - 1, -beta, -alpha, 1)
-            val score = -childValue.score
+            val childDepth = depth - 1
+            val score = if (moveIndex == 0) {
+                -negamax(child, childDepth, -beta, -alpha, 1).score
+            } else {
+                var candidate = -negamax(child, childDepth, -alpha - 1, -alpha, 1).score
+                if (candidate > alpha && candidate < beta) {
+                    candidate = -negamax(child, childDepth, -beta, -alpha, 1).score
+                }
+                candidate
+            }
             if (score > bestScore) {
                 bestScore = score
                 bestMove = move
-                bestPv = listOf(move) + childValue.principalVariation
+                val continuation = if (moveIndex == 0 || score > alpha) {
+                    // Re-search the selected move with a full window to retain its PV.
+                    val exact = -negamax(child, childDepth, -beta, -alpha, 1)
+                    if (score < beta) exact.principalVariation else emptyList()
+                } else emptyList()
+                bestPv = listOf(move) + continuation
             }
             alpha = max(alpha, score)
         }
@@ -141,16 +154,66 @@ class RussianDraughtsAi {
         var bestMove: DraughtsMove? = null
         var bestPv: List<DraughtsMove> = emptyList()
 
-        for (move in orderMoves(board, moves, ttMove, ply)) {
+        val orderedMoves = orderMoves(board, moves, ttMove, ply)
+        for ((moveIndex, move) in orderedMoves.withIndex()) {
             checkStop()
             val child = RussianDraughtsRules.applyMove(board, move)
-            val childValue = negamax(child, depth - 1, -beta, -alpha, ply + 1)
-            val score = -childValue.score
+            val movingPiece = board[move.from]
+            val promotionRow = if (movingPiece.side == Side.WHITE) 0 else 7
+            val promotes = !movingPiece.isKing && move.landings.any { it.row == promotionRow }
+            val extension = if (orderedMoves.size == 1) 1 else 0
+            val childDepth = depth - 1 + extension
+            val reduce = moveIndex >= 3 && depth >= 3 && !move.isCapture && !promotes
+
+            var score = if (moveIndex == 0) {
+                -negamax(child, childDepth, -beta, -alpha, ply + 1).score
+            } else {
+                val reducedDepth = if (reduce) max(0, childDepth - 1) else childDepth
+                var candidate = -negamax(
+                    child,
+                    reducedDepth,
+                    -alpha - 1,
+                    -alpha,
+                    ply + 1
+                ).score
+
+                // Late-move reduction is speculative. Any move that improves
+                // alpha is re-searched at full depth before it can replace the PV.
+                if (reduce && candidate > alpha) {
+                    candidate = -negamax(
+                        child,
+                        childDepth,
+                        -alpha - 1,
+                        -alpha,
+                        ply + 1
+                    ).score
+                }
+                if (candidate > alpha && candidate < beta) {
+                    candidate = -negamax(
+                        child,
+                        childDepth,
+                        -beta,
+                        -alpha,
+                        ply + 1
+                    ).score
+                }
+                candidate
+            }
 
             if (score > bestScore) {
                 bestScore = score
                 bestMove = move
-                bestPv = listOf(move) + childValue.principalVariation
+                bestPv = listOf(move)
+                if (score < beta) {
+                    val exact = if (moveIndex == 0) {
+                        negamax(child, childDepth, -beta, -alpha, ply + 1)
+                    } else {
+                        negamax(child, childDepth, -beta, -alpha, ply + 1)
+                    }
+                    bestPv = listOf(move) + exact.principalVariation
+                    score = -exact.score
+                    bestScore = score
+                }
             }
 
             alpha = max(alpha, score)
@@ -297,10 +360,17 @@ class RussianDraughtsAi {
             val square = Square.fromIndex(index)
             val center = 6 - (abs(square.row * 2 - 7) + abs(square.col * 2 - 7)) / 2
             val value = if (piece.isKing) {
-                330 + endgameBonus + center * 2
+                // Kings become especially valuable as the board clears; central
+                // squares also give flying kings more attacking routes.
+                320 + endgameBonus + center * 2
             } else {
                 val progress = if (piece.side == Side.WHITE) 7 - square.row else square.row
-                100 + progress * 4 + center
+                val centralFile = square.col in 2..5
+                val centralRank = square.row in 2..5
+                val promotionThreat = if (progress >= 5) (progress - 4) * 8 else 0
+                val edgePenalty = if (square.col == 0 || square.col == 7) 3 else 0
+                val centerBonus = if (centralFile && centralRank) 4 else 0
+                100 + progress * 5 + promotionThreat + centerBonus - edgePenalty + center
             }
             score += if (piece.side == Side.WHITE) value else -value
         }
