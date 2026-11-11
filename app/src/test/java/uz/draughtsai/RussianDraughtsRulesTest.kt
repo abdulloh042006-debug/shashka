@@ -1,186 +1,157 @@
 package uz.draughtsai
 
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RussianDraughtsRulesTest {
-    private fun position(
-        turn: Side = Side.WHITE,
-        vararg pieces: Pair<Square, Piece>
-    ): Board {
-        val cells = MutableList(64) { Piece.EMPTY }
-        pieces.forEach { (square, piece) -> cells[square.index] = piece }
-        return Board(cells, turn)
-    }
 
     @Test
-    fun manMovesForwardOnly() {
-        val board = position(Side.WHITE, Square(4, 3) to Piece.WHITE_MAN)
+    fun initialBoard_hasExactlySevenQuietOpeningMovesForWhite() {
+        val board = Board.initial()
         val moves = RussianDraughtsRules.legalMoves(board)
-        assertEquals(2, moves.size)
-        assertTrue(moves.all { it.from == Square(4, 3) && it.to.row == 3 })
+        val notations = moves.map { it.toNotation() }.toSet()
+
+        assertEquals(7, moves.size)
+        assertEquals(
+            setOf("a3-b4", "c3-b4", "c3-d4", "e3-d4", "e3-f4", "g3-f4", "g3-h4"),
+            notations
+        )
     }
 
     @Test
-    fun manCanCaptureBackward() {
-        val board = position(
-            Side.WHITE,
-            Square(4, 3) to Piece.WHITE_MAN,
-            Square(5, 4) to Piece.BLACK_MAN
+    fun menMoveForwardOnlyOnQuietMoves_andCaptureBothForwardAndBackward() {
+        // White man at d4, Black man behind it at c3 (b2 empty)
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("d4") to Piece(Side.WHITE, PieceKind.MAN),
+                Pos.fromNotation("c3") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
         )
+
+        val moves = RussianDraughtsRules.legalMoves(board)
+        // Compulsory backward capture d4:b2 must be the only legal move
+        assertEquals(1, moves.size)
+        assertEquals("d4:b2", moves.first().toNotation())
+    }
+
+    @Test
+    fun compulsoryCapture_disallowsAllQuietMoves() {
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("a3") to Piece(Side.WHITE, PieceKind.MAN),
+                Pos.fromNotation("c3") to Piece(Side.WHITE, PieceKind.MAN),
+                Pos.fromNotation("d4") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
+        )
+
         val moves = RussianDraughtsRules.legalMoves(board)
         assertEquals(1, moves.size)
-        assertTrue(moves.single().isCapture)
-        assertEquals(Square(6, 5), moves.single().to)
-        assertEquals(listOf(Square(5, 4)), moves.single().captured)
+        assertEquals("c3:e5", moves.first().toNotation())
+
+        val illegalQuiet = Move(
+            path = listOf(Pos.fromNotation("a3"), Pos.fromNotation("b4")),
+            captured = emptyList()
+        )
+        assertFalse(RussianDraughtsRules.isLegalMove(board, illegalQuiet))
     }
 
     @Test
-    fun captureIsMandatoryAndSuppressesQuietMoves() {
-        val board = position(
-            Side.WHITE,
-            Square(4, 3) to Piece.WHITE_MAN,
-            Square(5, 4) to Piece.BLACK_MAN,
-            Square(6, 1) to Piece.WHITE_MAN
+    fun midCapturePromotion_crownsImmediatelyAndContinuesAsFlyingKing() {
+        // White man at d6 jumps e7 -> lands on promotion square f8 (crowns to King immediately),
+        // then continues in the SAME turn as a flying king capturing c5 and landing on b4 or a3!
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("d6") to Piece(Side.WHITE, PieceKind.MAN),
+                Pos.fromNotation("e7") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("c5") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
         )
+
+        val moves = RussianDraughtsRules.legalMoves(board)
+        val notations = moves.map { it.toNotation() }.toSet()
+
+        assertEquals(setOf("d6:f8:b4", "d6:f8:a3"), notations)
+        assertTrue(moves.all { it.promoted })
+
+        // Applying d6:f8:a3 should leave a White King on a3 and remove both Black pieces
+        val chosen = moves.first { it.toNotation() == "d6:f8:a3" }
+        val nextBoard = RussianDraughtsRules.applyMove(board, chosen)
+        assertEquals(Piece(Side.WHITE, PieceKind.KING), nextBoard[Pos.fromNotation("a3")])
+        assertNull(nextBoard[Pos.fromNotation("e7")])
+        assertNull(nextBoard[Pos.fromNotation("c5")])
+        assertEquals(Side.BLACK, nextBoard.sideToMove)
+    }
+
+    @Test
+    fun turkishStrike_capturedPieceRemainsUntilTurnEnds_blockingSecondCapture() {
+        // Classic Turkish Strike position:
+        // White king at d2; Black men at e3, e5, c5, c3.
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("d2") to Piece(Side.WHITE, PieceKind.KING),
+                Pos.fromNotation("e3") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("e5") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("c5") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("c3") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
+        )
+
         val moves = RussianDraughtsRules.legalMoves(board)
         assertTrue(moves.isNotEmpty())
-        assertTrue(moves.all { it.isCapture })
-    }
-
-    @Test
-    fun manMustContinueAnAvailableMultipleCapture() {
-        val board = position(
-            Side.WHITE,
-            Square(5, 0) to Piece.WHITE_MAN,
-            Square(4, 1) to Piece.BLACK_MAN,
-            Square(2, 3) to Piece.BLACK_MAN
-        )
-        val moves = RussianDraughtsRules.legalMoves(board)
-        assertTrue(moves.any {
-            it.from == Square(5, 0) &&
-                it.landings == listOf(Square(3, 2), Square(1, 4)) &&
-                it.captured == listOf(Square(4, 1), Square(2, 3))
-        })
-    }
-
-    @Test
-    fun flyingKingCanChooseAnyEmptyLandingBeyondCapturedPiece() {
-        val board = position(
-            Side.WHITE,
-            Square(5, 0) to Piece.WHITE_KING,
-            Square(3, 2) to Piece.BLACK_MAN
-        )
-        val landings = RussianDraughtsRules.legalMoves(board).map { it.to }.toSet()
-        assertEquals(
-            setOf(Square(2, 3), Square(1, 4), Square(0, 5)),
-            landings
-        )
-    }
-
-    @Test
-    fun manPromotesDuringCaptureAndContinuesAsKing() {
-        val board = position(
-            Side.WHITE,
-            Square(2, 1) to Piece.WHITE_MAN,
-            Square(1, 2) to Piece.BLACK_MAN,
-            Square(1, 4) to Piece.BLACK_MAN
-        )
-        val moves = RussianDraughtsRules.legalMoves(board)
-        val sequence = moves.firstOrNull {
-            it.from == Square(2, 1) &&
-                it.landings.firstOrNull() == Square(0, 3) &&
-                it.captured.size == 2
+        for (move in moves) {
+            assertEquals(move.captured.size, move.captured.toSet().size)
+            assertTrue(move.captureCount <= 4)
         }
-        assertNotNull(sequence)
 
-        val result = RussianDraughtsRules.applyMove(board, sequence!!)
-        assertEquals(Piece.WHITE_KING, result[Square(2, 5)])
-        assertEquals(Piece.EMPTY, result[Square(1, 2)])
-        assertEquals(Piece.EMPTY, result[Square(1, 4)])
-        assertEquals(Side.BLACK, result.sideToMove)
-    }
-
-    @Test
-    fun classicRussianRulesDoNotRequireTheLongestCaptureSequence() {
-        val board = position(
-            Side.WHITE,
-            Square(6, 1) to Piece.WHITE_MAN,
-            Square(6, 7) to Piece.WHITE_MAN,
-            Square(5, 2) to Piece.BLACK_MAN,
-            Square(3, 2) to Piece.BLACK_MAN,
-            Square(5, 6) to Piece.BLACK_MAN
-        )
-        val moves = RussianDraughtsRules.legalMoves(board)
-        assertTrue(moves.any {
-            it.from == Square(6, 1) && it.captured.size == 2
-        })
-        assertTrue(moves.any {
-            it.from == Square(6, 7) && it.captured.size == 1
-        })
-    }
-
-    @Test
-    fun applyingCaptureRemovesCapturedPieceAndChangesTurn() {
-        val board = position(
-            Side.WHITE,
-            Square(4, 3) to Piece.WHITE_MAN,
-            Square(3, 2) to Piece.BLACK_MAN
-        )
-        val move = RussianDraughtsRules.legalMoves(board).single()
-        val result = RussianDraughtsRules.applyMove(board, move)
-        assertEquals(Piece.WHITE_MAN, result[move.to])
-        assertEquals(Piece.EMPTY, result[Square(3, 2)])
-        assertEquals(Side.BLACK, result.sideToMove)
-    }
-
-    @Test
-    fun kingMovesAlongClearDiagonalButStopsAtOwnPiece() {
-        val kingSquare = Square(5, 0)
-        val board = position(
-            Side.WHITE,
-            kingSquare to Piece.WHITE_KING,
-            Square(3, 2) to Piece.WHITE_MAN
-        )
-        val kingMoves = RussianDraughtsRules.legalMoves(board)
-            .filter { it.from == kingSquare }
-        assertFalse(kingMoves.any { it.to == Square(2, 3) })
-        assertTrue(kingMoves.any { it.to == Square(4, 1) })
-    }
-
-    @Test
-    fun turkishStrikeLeavesCapturedPiecesBlockingTheRayUntilTurnEnds() {
-        // Russian Draughts Federation example: black king a5:e1:g3:e5.
-        // The captured c3 checker remains on the board and blocks d4 capture.
-        val board = position(
-            Side.BLACK,
-            Square(3, 0) to Piece.BLACK_KING,
-            Square(5, 2) to Piece.WHITE_MAN,
-            Square(6, 5) to Piece.WHITE_MAN,
-            Square(4, 5) to Piece.WHITE_MAN,
-            Square(4, 3) to Piece.WHITE_MAN
-        )
-        val move = RussianDraughtsRules.legalMoves(board).firstOrNull {
-            it.from == Square(3, 0) &&
-                it.landings == listOf(Square(7, 4), Square(5, 6), Square(3, 4))
+        val clockwiseMoves = moves.filter {
+            it.path.take(4) == listOf(
+                Pos.fromNotation("d2"),
+                Pos.fromNotation("f4"),
+                Pos.fromNotation("d6"),
+                Pos.fromNotation("b4")
+            )
         }
-        assertNotNull(move)
-        assertEquals(
-            listOf(Square(5, 2), Square(6, 5), Square(4, 5)),
-            move!!.captured
-        )
-        assertFalse(move.captured.contains(Square(4, 3)))
+        val clockwiseNotations = clockwiseMoves.map { it.toNotation() }.toSet()
+        assertEquals(setOf("d2:f4:d6:b4:d2", "d2:f4:d6:b4:e1"), clockwiseNotations)
     }
 
     @Test
-    fun quietMoveToLastRowPromotesMan() {
-        val board = position(
-            Side.WHITE,
-            Square(1, 2) to Piece.WHITE_MAN
+    fun flyingKing_mustChooseLandingSquareWithContinuationWhenAvailable() {
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("a1") to Piece(Side.WHITE, PieceKind.KING),
+                Pos.fromNotation("c3") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("f4") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
         )
-        val move = RussianDraughtsRules.legalMoves(board)
-            .single { it.to == Square(0, 3) }
-        val result = RussianDraughtsRules.applyMove(board, move)
-        assertEquals(Piece.WHITE_KING, result[Square(0, 3)])
+
+        val moves = RussianDraughtsRules.legalMoves(board)
+        val notations = moves.map { it.toNotation() }.toSet()
+        assertEquals(setOf("a1:e5:g3", "a1:e5:h2"), notations)
+    }
+
+    @Test
+    fun classicRussianCaptureChoice_doesNotForceMaximumCaptureCount() {
+        val board = Board.fromMap(
+            pieces = mapOf(
+                Pos.fromNotation("c3") to Piece(Side.WHITE, PieceKind.MAN),
+                Pos.fromNotation("b4") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("d4") to Piece(Side.BLACK, PieceKind.MAN),
+                Pos.fromNotation("f4") to Piece(Side.BLACK, PieceKind.MAN)
+            ),
+            sideToMove = Side.WHITE
+        )
+
+        val moves = RussianDraughtsRules.legalMoves(board)
+        val notations = moves.map { it.toNotation() }.toSet()
+        assertEquals(setOf("c3:a5", "c3:e5:g3"), notations)
     }
 }

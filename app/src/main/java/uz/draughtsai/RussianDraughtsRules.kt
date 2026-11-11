@@ -1,270 +1,423 @@
 package uz.draughtsai
 
 /**
- * One complete turn. A capture move contains every landing square in order
- * and every captured square in the same order.
+ * Match status for a Russian Draughts board position.
  */
-data class DraughtsMove(
-    val from: Square,
-    val landings: List<Square>,
-    val captured: List<Square> = emptyList()
-) {
-    init {
-        require(landings.isNotEmpty()) { "A move must have at least one landing square." }
-        require(captured.isEmpty() || captured.size == landings.size) {
-            "Each capture landing must correspond to exactly one captured piece."
-        }
-    }
-
-    val to: Square get() = landings.last()
-    val isCapture: Boolean get() = captured.isNotEmpty()
+enum class GameStatus {
+    ONGOING,
+    WHITE_WINS,
+    BLACK_WINS
 }
 
-private data class CaptureStep(
-    val victim: Square,
-    val landing: Square
-)
-
 /**
- * Classic Russian Draughts rules for an 8x8 board.
+ * Deterministic, Android-independent rules engine implementing **Classic Russian Draughts**
+ * (Русские шашки) according to the Russian Draughts Federation rules:
  *
- * Important implementation detail: captured pieces remain on the board until
- * the whole multiple-capture sequence is complete. They block lines and cannot
- * be captured a second time during the same move ("Turkish strike" rule).
+ * 1. 8x8 board, 32 dark squares, 12 men per side, White moves first.
+ * 2. Men move 1 square diagonally forward on quiet moves.
+ * 3. Men capture adjacent enemy pieces in all 4 diagonal directions (including backwards).
+ * 4. Capturing is strictly compulsory; quiet moves are illegal when any capture exists.
+ * 5. Multi-captures must continue with the same piece until no further capture is available.
+ * 6. Kings are flying kings: they move any unobstructed diagonal distance and, when capturing,
+ *    may land on any empty square beyond the captured piece before the next occupied square
+ *    (provided that if any landing square offers a continuation capture, the king must land on
+ *    a square that continues the capture).
+ * 7. Turkish strike (Турецкий удар): captured pieces remain on the board until the entire capture
+ *    sequence finishes. They block diagonal rays and cannot be captured a second time.
+ * 8. Mid-capture promotion: a Man reaching the promotion row during a capture immediately
+ *    becomes a King and continues the same turn using flying-king capture rules.
+ * 9. Free capture choice: when multiple complete capture sequences exist, the player may choose
+ *    any of them (no mandatory maximum-capture restriction).
  */
 object RussianDraughtsRules {
-    private val diagonals = listOf(
+
+    private val DIAGONAL_DIRECTIONS = arrayOf(
         -1 to -1,
         -1 to 1,
         1 to -1,
         1 to 1
     )
 
-    /** Returns every legal complete move for the side to move. */
-    fun legalMoves(board: Board): List<DraughtsMove> {
-        val captures = mutableListOf<DraughtsMove>()
+    /**
+     * Generates all complete legal turns for `board.sideToMove`.
+     */
+    fun legalMoves(board: Board): List<Move> {
+        val side = board.sideToMove
+        val captureMoves = mutableListOf<Move>()
 
-        for (index in board.cells.indices) {
-            val piece = board.cells[index]
-            if (piece.side != board.sideToMove) continue
-            captures += captureMovesForPiece(board, Square.fromIndex(index), piece)
+        for (pos in Pos.PLAYABLE_SQUARES) {
+            val piece = board[pos] ?: continue
+            if (piece.side != side) continue
+            captureMoves.addAll(generateCapturesForPiece(board, pos, piece))
         }
 
-        // Capturing is compulsory: quiet moves are not returned if any capture exists.
-        if (captures.isNotEmpty()) return captures
+        // Compulsory capture rule: if any capture exists, quiet moves are illegal.
+        if (captureMoves.isNotEmpty()) {
+            return captureMoves
+        }
 
-        return quietMoves(board)
+        val quietMoves = mutableListOf<Move>()
+        for (pos in Pos.PLAYABLE_SQUARES) {
+            val piece = board[pos] ?: continue
+            if (piece.side != side) continue
+            quietMoves.addAll(generateQuietMovesForPiece(board, pos, piece))
+        }
+        return quietMoves
     }
 
-    /** True only when the exact complete move is currently legal. */
-    fun isLegalMove(board: Board, move: DraughtsMove): Boolean =
-        move in legalMoves(board)
+    /**
+     * Returns all legal moves starting from [from] in the given [board].
+     * Respects global compulsory capture (returns empty if another piece must capture instead).
+     */
+    fun legalMovesFrom(board: Board, from: Pos): List<Move> {
+        return legalMoves(board).filter { it.from == from }
+    }
 
     /**
-     * Applies a complete legal move and switches the side to move.
-     * Editor repositioning should use Board.movePieceForEditing instead.
+     * Returns true if [side] has at least one capture available on [board].
      */
-    fun applyMove(board: Board, move: DraughtsMove): Board {
-        require(isLegalMove(board, move)) { "The supplied move is not legal in this position." }
+    fun hasCapture(board: Board, side: Side = board.sideToMove): Boolean {
+        val targetBoard = board.withSideToMove(side)
+        for (pos in Pos.PLAYABLE_SQUARES) {
+            val piece = targetBoard[pos] ?: continue
+            if (piece.side != side) continue
+            if (generateCapturesForPiece(targetBoard, pos, piece).isNotEmpty()) {
+                return true
+            }
+        }
+        return false
+    }
 
-        val movingPiece = board[move.from]
-        val updated = board.cells.toMutableList()
-        updated[move.from.index] = Piece.EMPTY
+    /**
+     * Checks whether [move] is a complete, legal move in [board].
+     * Rejects incomplete multi-captures, quiet moves when a capture exists, and illegal paths.
+     */
+    fun isLegalMove(board: Board, move: Move): Boolean {
+        return legalMoves(board).any { legal ->
+            legal.path == move.path && legal.captured == move.captured
+        }
+    }
 
-        // Captured pieces are removed only after the complete sequence.
-        move.captured.forEach { updated[it.index] = Piece.EMPTY }
+    /**
+     * Applies a verified legal [move] to [board], removing all captured pieces at the end
+     * of the sequence, crowning promoted pieces, and switching `sideToMove`.
+     */
+    fun applyMove(board: Board, move: Move): Board {
+        val matchedMove = legalMoves(board).firstOrNull { legal ->
+            legal.path == move.path && legal.captured == move.captured
+        } ?: throw IllegalArgumentException("Illegal or incomplete move: $move for board:\n$board")
 
-        val promotionRow = if (movingPiece.side == Side.WHITE) 0 else 7
-        val reachesPromotionRow = !movingPiece.isKing &&
-            move.landings.any { it.row == promotionRow }
+        val movingPiece = board[matchedMove.from]
+            ?: throw IllegalStateException("No piece at move start ${matchedMove.from}")
 
-        val finalPiece = if (reachesPromotionRow) {
-            if (movingPiece.side == Side.WHITE) Piece.WHITE_KING else Piece.BLACK_KING
+        var nextBoard = board.removePiece(matchedMove.from)
+
+        // Remove all captured enemy pieces after the entire sequence is completed.
+        for (victimPos in matchedMove.captured) {
+            nextBoard = nextBoard.removePiece(victimPos)
+        }
+
+        val finalPiece = if (matchedMove.promoted || matchedMove.to.row == movingPiece.side.promotionRow) {
+            movingPiece.promote()
         } else {
             movingPiece
         }
 
-        updated[move.to.index] = finalPiece
-        return Board(updated, board.sideToMove.opponent())
+        nextBoard = nextBoard
+            .setPiece(matchedMove.to, finalPiece)
+            .withSideToMove(board.sideToMove.opposite())
+
+        return nextBoard
     }
 
-    private fun quietMoves(board: Board): List<DraughtsMove> {
-        val result = mutableListOf<DraughtsMove>()
-
-        for (index in board.cells.indices) {
-            val piece = board.cells[index]
-            if (piece.side != board.sideToMove) continue
-
-            val from = Square.fromIndex(index)
-            if (piece.isKing) {
-                for ((dr, dc) in diagonals) {
-                    var row = from.row + dr
-                    var col = from.col + dc
-                    while (inside(row, col)) {
-                        val target = Square(row, col)
-                        if (board[target] != Piece.EMPTY) break
-                        result += DraughtsMove(from, listOf(target))
-                        row += dr
-                        col += dc
-                    }
-                }
-            } else {
-                val forward = if (piece.side == Side.WHITE) -1 else 1
-                for (dc in intArrayOf(-1, 1)) {
-                    val row = from.row + forward
-                    val col = from.col + dc
-                    if (inside(row, col)) {
-                        val target = Square(row, col)
-                        if (board[target] == Piece.EMPTY) {
-                            result += DraughtsMove(from, listOf(target))
-                        }
-                    }
-                }
-            }
+    /**
+     * Evaluates whether the game is ongoing or won by one side (opponent has no pieces or no legal moves).
+     */
+    fun gameStatus(board: Board): GameStatus {
+        val moves = legalMoves(board)
+        if (moves.isEmpty()) {
+            return if (board.sideToMove == Side.WHITE) GameStatus.BLACK_WINS else GameStatus.WHITE_WINS
         }
-
-        return result
+        return GameStatus.ONGOING
     }
 
-    private fun captureMovesForPiece(
-        board: Board,
-        from: Square,
-        initialPiece: Piece
-    ): List<DraughtsMove> {
-        val result = mutableListOf<DraughtsMove>()
-        val cells = board.cells.toMutableList()
-        cells[from.index] = Piece.EMPTY
+    // -------------------------------------------------------------------------
+    // Internal Quiet Move Generation
+    // -------------------------------------------------------------------------
 
-        fun search(
-            position: Square,
-            movingPiece: Piece,
-            capturedIndexes: Set<Int>,
-            landings: List<Square>,
-            capturedSquares: List<Square>,
-            currentCells: List<Piece>
-        ) {
-            val options = captureOptions(
-                currentCells,
-                position,
-                movingPiece,
-                capturedIndexes
-            )
+    private fun generateQuietMovesForPiece(board: Board, from: Pos, piece: Piece): List<Move> {
+        return when (piece.kind) {
+            PieceKind.MAN -> generateManQuietMoves(board, from, piece.side)
+            PieceKind.KING -> generateKingQuietMoves(board, from, piece.side)
+        }
+    }
 
-            if (options.isEmpty()) {
-                if (capturedSquares.isNotEmpty()) {
-                    result += DraughtsMove(from, landings, capturedSquares)
-                }
-                return
-            }
-
-            for (option in options) {
-                val nextCells = currentCells.toMutableList()
-                nextCells[position.index] = Piece.EMPTY
-
-                val promotionRow = if (movingPiece.side == Side.WHITE) 0 else 7
-                val becomesKing = !movingPiece.isKing &&
-                    option.landing.row == promotionRow
-                val nextPiece = if (becomesKing) {
-                    if (movingPiece.side == Side.WHITE) Piece.WHITE_KING else Piece.BLACK_KING
-                } else {
-                    movingPiece
-                }
-
-                // Do not remove the victim here. It remains as an obstacle until
-                // the entire capture sequence ends.
-                nextCells[option.landing.index] = nextPiece
-
-                search(
-                    position = option.landing,
-                    movingPiece = nextPiece,
-                    capturedIndexes = capturedIndexes + option.victim.index,
-                    landings = landings + option.landing,
-                    capturedSquares = capturedSquares + option.victim,
-                    currentCells = nextCells
+    private fun generateManQuietMoves(board: Board, from: Pos, side: Side): List<Move> {
+        val moves = mutableListOf<Move>()
+        val nextRow = from.row + side.forwardRowDelta
+        for (dCol in intArrayOf(-1, 1)) {
+            val target = Pos(nextRow, from.col + dCol)
+            if (target.isInside && board[target] == null) {
+                val promoted = target.row == side.promotionRow
+                moves.add(
+                    Move(
+                        path = listOf(from, target),
+                        captured = emptyList(),
+                        promoted = promoted
+                    )
                 )
             }
         }
+        return moves
+    }
 
-        search(
-            position = from,
-            movingPiece = initialPiece,
-            capturedIndexes = emptySet(),
-            landings = emptyList(),
-            capturedSquares = emptyList(),
-            currentCells = cells
+    private fun generateKingQuietMoves(board: Board, from: Pos, side: Side): List<Move> {
+        val moves = mutableListOf<Move>()
+        for ((dRow, dCol) in DIAGONAL_DIRECTIONS) {
+            var r = from.row + dRow
+            var c = from.col + dCol
+            while (r in 0..7 && c in 0..7) {
+                val target = Pos(r, c)
+                if (board[target] != null) break
+                moves.add(
+                    Move(
+                        path = listOf(from, target),
+                        captured = emptyList(),
+                        promoted = false
+                    )
+                )
+                r += dRow
+                c += dCol
+            }
+        }
+        return moves
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal Capture & Multi-Capture Generation (Turkish Strike + Mid-Promotion)
+    // -------------------------------------------------------------------------
+
+    private fun generateCapturesForPiece(board: Board, startPos: Pos, startPiece: Piece): List<Move> {
+        val results = mutableListOf<Move>()
+        expandCaptureSequence(
+            initialBoard = board,
+            initialFrom = startPos,
+            side = startPiece.side,
+            currentPos = startPos,
+            currentKind = startPiece.kind,
+            pathSoFar = listOf(startPos),
+            capturedSoFar = emptyList(),
+            capturedSet = emptySet(),
+            promotedSoFar = false,
+            results = results
         )
-
-        return result
+        return results
     }
 
-    private fun captureOptions(
-        cells: List<Piece>,
-        from: Square,
-        piece: Piece,
-        capturedIndexes: Set<Int>
-    ): List<CaptureStep> {
-        val result = mutableListOf<CaptureStep>()
-        val enemy = piece.side!!.opponent()
-
-        if (!piece.isKing) {
-            // A man captures in all four diagonal directions, even backwards.
-            for ((dr, dc) in diagonals) {
-                val victimRow = from.row + dr
-                val victimCol = from.col + dc
-                val landingRow = from.row + 2 * dr
-                val landingCol = from.col + 2 * dc
-
-                if (!inside(victimRow, victimCol) || !inside(landingRow, landingCol)) {
-                    continue
-                }
-
-                val victim = Square(victimRow, victimCol)
-                val landing = Square(landingRow, landingCol)
-
-                if (
-                    cells[victim.index].side == enemy &&
-                    victim.index !in capturedIndexes &&
-                    cells[landing.index] == Piece.EMPTY
-                ) {
-                    result += CaptureStep(victim, landing)
-                }
-            }
-            return result
-        }
-
-        // A flying king sees the first occupied square on each diagonal.
-        // If it is an uncaptured enemy, every empty square beyond it is a
-        // possible landing square, until the next occupied square.
-        for ((dr, dc) in diagonals) {
-            var row = from.row + dr
-            var col = from.col + dc
-
-            while (inside(row, col) && cells[Square(row, col).index] == Piece.EMPTY) {
-                row += dr
-                col += dc
-            }
-
-            if (!inside(row, col)) continue
-
-            val victim = Square(row, col)
-            if (cells[victim.index].side != enemy || victim.index in capturedIndexes) {
-                continue
-            }
-
-            row += dr
-            col += dc
-            while (inside(row, col)) {
-                val landing = Square(row, col)
-                if (cells[landing.index] != Piece.EMPTY) break
-                result += CaptureStep(victim, landing)
-                row += dr
-                col += dc
-            }
-        }
-
-        return result
+    /**
+     * Checks whether [pos] is occupied during a capture sequence.
+     * Note:
+     * - [initialFrom] was vacated when the moving piece started its move.
+     * - Pieces in [capturedSet] remain physically on the board until the entire capture
+     *   sequence ends (Turkish strike), so their squares are STILL occupied and block rays!
+     */
+    private fun isSquareOccupiedDuringCapture(
+        initialBoard: Board,
+        initialFrom: Pos,
+        pos: Pos
+    ): Boolean {
+        if (pos == initialFrom) return false
+        return initialBoard[pos] != null
     }
 
-    private fun inside(row: Int, col: Int): Boolean =
-        row in 0..7 && col in 0..7
+    private fun expandCaptureSequence(
+        initialBoard: Board,
+        initialFrom: Pos,
+        side: Side,
+        currentPos: Pos,
+        currentKind: PieceKind,
+        pathSoFar: List<Pos>,
+        capturedSoFar: List<Pos>,
+        capturedSet: Set<Pos>,
+        promotedSoFar: Boolean,
+        results: MutableList<Move>
+    ) {
+        when (currentKind) {
+            PieceKind.MAN -> {
+                var foundAnyStep = false
+                for ((dRow, dCol) in DIAGONAL_DIRECTIONS) {
+                    val victimPos = Pos(currentPos.row + dRow, currentPos.col + dCol)
+                    val landingPos = Pos(currentPos.row + 2 * dRow, currentPos.col + 2 * dCol)
+
+                    if (!landingPos.isInside) continue
+                    if (victimPos in capturedSet) continue
+
+                    val victimPiece = if (victimPos == initialFrom) null else initialBoard[victimPos]
+                    if (victimPiece == null || victimPiece.side == side) continue
+                    if (isSquareOccupiedDuringCapture(initialBoard, initialFrom, landingPos)) continue
+
+                    foundAnyStep = true
+                    val crownsNow = landingPos.row == side.promotionRow
+                    val nextKind = if (crownsNow) PieceKind.KING else PieceKind.MAN
+                    val nextPromoted = promotedSoFar || crownsNow
+
+                    expandCaptureSequence(
+                        initialBoard = initialBoard,
+                        initialFrom = initialFrom,
+                        side = side,
+                        currentPos = landingPos,
+                        currentKind = nextKind,
+                        pathSoFar = pathSoFar + landingPos,
+                        capturedSoFar = capturedSoFar + victimPos,
+                        capturedSet = capturedSet + victimPos,
+                        promotedSoFar = nextPromoted,
+                        results = results
+                    )
+                }
+
+                if (!foundAnyStep && capturedSoFar.isNotEmpty()) {
+                    results.add(
+                        Move(
+                            path = pathSoFar,
+                            captured = capturedSoFar,
+                            promoted = promotedSoFar
+                        )
+                    )
+                }
+            }
+
+            PieceKind.KING -> {
+                var foundAnyDirectionCapture = false
+
+                for ((dRow, dCol) in DIAGONAL_DIRECTIONS) {
+                    var r = currentPos.row + dRow
+                    var c = currentPos.col + dCol
+
+                    // 1. Scan empty squares before the first occupied square on this ray
+                    while (r in 0..7 && c in 0..7) {
+                        val scanPos = Pos(r, c)
+                        if (isSquareOccupiedDuringCapture(initialBoard, initialFrom, scanPos)) {
+                            break
+                        }
+                        r += dRow
+                        c += dCol
+                    }
+
+                    if (r !in 0..7 || c !in 0..7) continue
+                    val victimPos = Pos(r, c)
+
+                    // Turkish strike: an already-captured piece still sits on the board and blocks the ray
+                    if (victimPos in capturedSet) continue
+
+                    val victimPiece = if (victimPos == initialFrom) null else initialBoard[victimPos]
+                    if (victimPiece == null || victimPiece.side == side) continue
+
+                    // 2. Collect all unobstructed empty landing squares beyond victimPos
+                    val candidateLandings = mutableListOf<Pos>()
+                    var lr = victimPos.row + dRow
+                    var lc = victimPos.col + dCol
+                    while (lr in 0..7 && lc in 0..7) {
+                        val landPos = Pos(lr, lc)
+                        if (isSquareOccupiedDuringCapture(initialBoard, initialFrom, landPos)) {
+                            break
+                        }
+                        candidateLandings.add(landPos)
+                        lr += dRow
+                        lc += dCol
+                    }
+
+                    if (candidateLandings.isEmpty()) continue
+
+                    foundAnyDirectionCapture = true
+                    val nextCapturedList = capturedSoFar + victimPos
+                    val nextCapturedSet = capturedSet + victimPos
+
+                    // Russian Draughts Rule 6.1.5:
+                    // If at least one landing square behind the captured piece allows a further capture,
+                    // the king MUST land on a square from which continuation is possible.
+                    // Otherwise, if no landing square allows a continuation, the king may stop on any of them.
+                    val landingsWithContinuation = candidateLandings.filter { landing ->
+                        kingHasFurtherCaptureFrom(
+                            initialBoard = initialBoard,
+                            initialFrom = initialFrom,
+                            side = side,
+                            fromPos = landing,
+                            capturedSet = nextCapturedSet
+                        )
+                    }
+
+                    if (landingsWithContinuation.isNotEmpty()) {
+                        for (landing in landingsWithContinuation) {
+                            expandCaptureSequence(
+                                initialBoard = initialBoard,
+                                initialFrom = initialFrom,
+                                side = side,
+                                currentPos = landing,
+                                currentKind = PieceKind.KING,
+                                pathSoFar = pathSoFar + landing,
+                                capturedSoFar = nextCapturedList,
+                                capturedSet = nextCapturedSet,
+                                promotedSoFar = promotedSoFar,
+                                results = results
+                            )
+                        }
+                    } else {
+                        for (landing in candidateLandings) {
+                            results.add(
+                                Move(
+                                    path = pathSoFar + landing,
+                                    captured = nextCapturedList,
+                                    promoted = promotedSoFar
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (!foundAnyDirectionCapture && capturedSoFar.isNotEmpty()) {
+                    results.add(
+                        Move(
+                            path = pathSoFar,
+                            captured = capturedSoFar,
+                            promoted = promotedSoFar
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun kingHasFurtherCaptureFrom(
+        initialBoard: Board,
+        initialFrom: Pos,
+        side: Side,
+        fromPos: Pos,
+        capturedSet: Set<Pos>
+    ): Boolean {
+        for ((dRow, dCol) in DIAGONAL_DIRECTIONS) {
+            var r = fromPos.row + dRow
+            var c = fromPos.col + dCol
+            while (r in 0..7 && c in 0..7) {
+                val scanPos = Pos(r, c)
+                if (isSquareOccupiedDuringCapture(initialBoard, initialFrom, scanPos)) {
+                    break
+                }
+                r += dRow
+                c += dCol
+            }
+            if (r !in 0..7 || c !in 0..7) continue
+            val victimPos = Pos(r, c)
+            if (victimPos in capturedSet) continue
+            val victimPiece = if (victimPos == initialFrom) null else initialBoard[victimPos]
+            if (victimPiece == null || victimPiece.side == side) continue
+
+            val nextAfterVictim = Pos(victimPos.row + dRow, victimPos.col + dCol)
+            if (nextAfterVictim.isInside &&
+                !isSquareOccupiedDuringCapture(initialBoard, initialFrom, nextAfterVictim)
+            ) {
+                return true
+            }
+        }
+        return false
+    }
 }
