@@ -14,3 +14,4 @@
 - [x] M4: position save/load (FEN) and algebraic notation.
 - [x] M5: user-selected screenshot import and confirmation preview.
 - [x] M6: optional transparent floating analysis HUD for authorized positions.
+- [ ] M7: system floating window over other apps with transparency and lock (task: docs/tasks/M7-system-overlay.md).
