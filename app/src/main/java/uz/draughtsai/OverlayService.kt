@@ -175,9 +175,9 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner {
             }
             ACTION_UNLOCK -> holder.setLocked(false)
         }
-        startInForeground(holder.state.value.settings.locked)
-        if (!Settings.canDrawOverlays(this)) {
-            // Permission was revoked: nothing can be shown.
+        val started = runCatching { startInForeground(holder.state.value.settings.locked) }.isSuccess
+        if (!started || !Settings.canDrawOverlays(this)) {
+            // Android 15 may refuse a sticky restart while no overlay is visible; or the permission was revoked.
             stopSelf()
             return START_NOT_STICKY
         }
