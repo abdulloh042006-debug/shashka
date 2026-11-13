@@ -1,10 +1,14 @@
 package uz.draughtsai
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -55,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -76,8 +81,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -134,9 +142,12 @@ fun DraughtsAiApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val aiEngine = remember { DraughtsAI() }
+    // M7: one shared position for the main screen and the floating window over other apps.
+    val overlayHolder = remember { OverlayRepository.get(context) }
+    val overlayRunning by overlayHolder.overlayRunning.collectAsState()
 
     // Board & History State
-    var board by remember { mutableStateOf(Board.initial()) }
+    var board by remember { mutableStateOf(overlayHolder.state.value.board) }
     val undoStack = remember { mutableStateListOf<Board>() }
     val redoStack = remember { mutableStateListOf<Board>() }
     val moveLog = remember { mutableStateListOf<String>() }
@@ -159,8 +170,7 @@ fun DraughtsAiApp() {
     var activeSearchJob by remember { mutableStateOf<Job?>(null) }
     var activeCancelFlag by remember { mutableStateOf(AtomicBoolean(false)) }
 
-    // Optional User-Invoked Floating Mini Analysis HUD (in-app)
-    var showFloatingHud by remember { mutableStateOf(false) }
+    // Optional user-invoked floating analysis window (M6 HUD, M7 over other apps)
     var showHudInfoDialog by remember { mutableStateOf(false) }
 
     // Screenshot Import Confirmation Preview State
@@ -240,6 +250,44 @@ fun DraughtsAiApp() {
         }
     }
 
+    // M7: keep the floating window and the main board in sync (both directions).
+    LaunchedEffect(board) { overlayHolder.syncFromApp(board) }
+    LaunchedEffect(overlayHolder) {
+        overlayHolder.state.map { it.board }.distinctUntilChanged().collect { shared ->
+            if (shared != board) {
+                pushBoardChange(shared)
+                statusMessage = "Position updated from the floating window"
+            }
+        }
+    }
+
+    // M7: overlay permission flow. Settings are opened only when the user taps the button; never re-asked automatically.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // The window works without the notification permission; only the "Yopish" notification would be hidden.
+        OverlayService.start(context)
+    }
+    fun startOverlayWindow() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            OverlayService.start(context)
+        }
+    }
+    val overlayPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        if (Settings.canDrawOverlays(context)) {
+            startOverlayWindow()
+        } else {
+            statusMessage = "Overlay permission not granted — floating window not opened."
+        }
+    }
+
     // Android Photo Picker for explicit user screenshot import (Milestone M5)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -311,14 +359,14 @@ fun DraughtsAiApp() {
                         }
                         OutlinedButton(
                             onClick = {
-                                if (!showFloatingHud) {
+                                if (!overlayRunning) {
                                     showHudInfoDialog = true
                                 } else {
-                                    showFloatingHud = false
+                                    OverlayService.stop(context)
                                 }
                             }
                         ) {
-                            Text(if (showFloatingHud) "Hide HUD" else "HUD")
+                            Text(if (overlayRunning) "Hide HUD" else "HUD")
                         }
                     }
                 }
@@ -607,55 +655,6 @@ fun DraughtsAiApp() {
                     }
                 }
             }
-
-            // Optional User-Invoked Floating Mini Analysis Panel (Milestone M6)
-            if (showFloatingHud) {
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .width(210.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xE61E2430)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Analysis HUD",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "✕",
-                                modifier = Modifier.clickable { showFloatingHud = false },
-                                color = Color.LightGray
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        val res = latestSearchResult
-                        Text(
-                            text = "Turn: ${board.sideToMove}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            text = "Best: ${res?.bestMove?.toNotation() ?: "—"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Eval: ${res?.formattedScore() ?: "..."} (d=${res?.completedDepth ?: 0})",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
         }
     }
 
@@ -663,23 +662,35 @@ fun DraughtsAiApp() {
     if (showHudInfoDialog) {
         AlertDialog(
             onDismissRequest = { showHudInfoDialog = false },
-            title = { Text("Enable Compact Analysis HUD?") },
+            title = { Text("Enable Floating Analysis Window?") },
             text = {
+                val hasPermission = Settings.canDrawOverlays(context)
                 Text(
-                    "This compact floating panel displays live AI evaluation and best-move " +
-                        "recommendations strictly for positions you have manually entered or " +
-                        "explicitly imported into Draughts AI. It never captures other apps' " +
-                        "screens or performs automated clicks."
+                    "This floating window stays on top of other apps and displays live AI evaluation and " +
+                        "best-move recommendations strictly for positions you have manually entered, " +
+                        "played on its mini board, or explicitly imported into Draughts AI. It never " +
+                        "captures other apps' screens or performs automated clicks." +
+                        if (hasPermission) "" else "\n\nTo show it over other apps, allow " +
+                            "\"Display over other apps\" for Draughts AI on the next screen."
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
                         showHudInfoDialog = false
-                        showFloatingHud = true
+                        if (Settings.canDrawOverlays(context)) {
+                            startOverlayWindow()
+                        } else {
+                            overlayPermissionLauncher.launch(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
                     }
                 ) {
-                    Text("Enable HUD")
+                    Text(if (Settings.canDrawOverlays(context)) "Enable HUD" else "Open settings")
                 }
             },
             dismissButton = {
